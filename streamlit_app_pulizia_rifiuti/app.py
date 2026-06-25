@@ -11,15 +11,15 @@ from pulisci_file_rifiuti import clean_excel_file
 
 
 st.set_page_config(
-    page_title="Pulizia file rifiuti",
-    page_icon="🧹",
+    page_title="Pulizia file rifiuti nave",
+    page_icon="🚢",
     layout="centered",
 )
 
-st.title("Pulizia file Excel rifiuti")
+st.title("Pulizia file Excel - Rifiuti Nave")
 st.markdown(
     """
-Questa applicazione consente di caricare un file Excel, correggere automaticamente le colonne **Nr. Doc.**, **MC** e **Kg**, ordinare il database e scaricare il file pulito.
+Questa applicazione consente di caricare il file Excel relativo ai Rifiuti Nave, correggere automaticamente le colonne **Nr. Doc.**, **MC** e **Kg**, ordinare il database e scaricare il file pulito.
 
 Il file viene elaborato temporaneamente durante la sessione e non viene salvato in modo permanente dall'applicazione.
 """
@@ -29,8 +29,8 @@ with st.expander("Cosa fa l'app", expanded=False):
     st.markdown(
         """
 - Normalizza la colonna **Nr. Doc.** in numero intero.
-- Corregge i casi troncati, ad esempio `5,64` → `5.640`.
-- Converte **MC** e **Kg** in valori numerici.
+- Corregge i casi troncati, ad esempio `5.64` → `5.640`.
+- Converte **MC** e **Kg** in valori numerici e formato numero italiano
 - Ordina l'intera tabella in ordine crescente sulla base di **Nr. Doc.**.
 - Restituisce un nuovo file Excel pulito.
 """
