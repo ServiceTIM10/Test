@@ -48,11 +48,11 @@ def normalize_nr_doc(value: Any) -> int | None:
       quindi 5.64 -> 5.640 e 5.645 -> 5.645, cioè si moltiplica per 1000.
 
     Esempi:
-    - 5.64   -> 5640
-    - 5.645  -> 5645
-    - 1.23   -> 1230
-    - 1229   -> 1229
-    - '5,64' -> 5640
+    - 5.64    -> 5640
+    - 5.645   -> 5645
+    - 1.23    -> 1230
+    - 1229    -> 1229
+    - '5,64'  -> 5640
     - '5.640' -> 5640
     """
     if value is None or value == "":
@@ -104,15 +104,18 @@ def normalize_nr_doc(value: Any) -> int | None:
 
 def parse_italian_or_standard_number(value: Any) -> float | None:
     """
-    Converte MC e Kg in numero float gestendo sia formati standard sia italiani.
+    Converte MC e Kg in numero float gestendo sia formati standard sia italiani,
+    inclusi alcuni casi sporchi/malformati.
 
     Esempi gestiti:
-    - 1234.56     -> 1234.56
-    - '1234.56'   -> 1234.56
-    - '1.234,56'  -> 1234.56
-    - '1234,56'   -> 1234.56
-    - '1,234.56'  -> 1234.56
-    - '' / None   -> None
+    - 1234.56      -> 1234.56
+    - '1234.56'    -> 1234.56
+    - '1.234,56'   -> 1234.56
+    - '1234,56'    -> 1234.56
+    - '1,234.56'   -> 1234.56
+    - '1.125.00'   -> 1125.00
+    - '1.125.000'  -> 1125000.00
+    - '' / None    -> None
     """
     if value is None or value == "":
         return None
@@ -136,19 +139,42 @@ def parse_italian_or_standard_number(value: Any) -> float | None:
     if "," in s and "." in s:
         # Il separatore decimale è quello più a destra.
         if s.rfind(",") > s.rfind("."):
-            # Italiano: 1.234,56
+            # Italiano: 1.234,56 -> 1234.56
             s = s.replace(".", "").replace(",", ".")
         else:
-            # Inglese/internazionale: 1,234.56
+            # Inglese/internazionale: 1,234.56 -> 1234.56
             s = s.replace(",", "")
+
     elif "," in s:
-        # Italiano senza migliaia: 1234,56
+        # Italiano senza migliaia: 1234,56 -> 1234.56
         s = s.replace(",", ".")
-    else:
-        # Punto come decimale standard, es. 1234.56 o 0.08.
-        # Se ci fossero più punti come migliaia, li gestiamo.
-        if s.count(".") > 1 and re.fullmatch(r"\d{1,3}(\.\d{3})+", s):
-            s = s.replace(".", "")
+
+    elif "." in s:
+        # Caso con più punti.
+        # Esempi:
+        # - 1.125.00   -> 1125.00
+        # - 1.125.000  -> 1125000
+        # - 1.125.000.00 -> 1125000.00
+        if s.count(".") > 1:
+            parts = s.split(".")
+
+            # Se l'ultima parte ha 1 o 2 cifre, la interpreto come parte decimale.
+            # I punti precedenti vengono interpretati come separatori delle migliaia.
+            if len(parts[-1]) in (1, 2):
+                integer_part = "".join(parts[:-1])
+                decimal_part = parts[-1]
+                s = integer_part + "." + decimal_part
+
+            # Se tutte le parti dopo la prima hanno 3 cifre,
+            # interpreto tutti i punti come separatori delle migliaia.
+            elif all(len(p) == 3 for p in parts[1:]):
+                s = "".join(parts)
+
+            else:
+                raise ValueError(f"Formato numerico con punti non riconosciuto: {value!r}")
+
+        # Caso con un solo punto: lo lascio come decimale standard.
+        # Esempio: 1234.56 -> 1234.56
 
     return float(s)
 
@@ -196,10 +222,11 @@ def clean_excel_file(input_path: str | Path, output_path: str | Path, sheet_name
 
         old_doc = values[col_doc - 1]
         new_doc = normalize_nr_doc(old_doc)
+
         if old_doc != new_doc:
             corrected_doc_count += 1
-        values[col_doc - 1] = new_doc
 
+        values[col_doc - 1] = new_doc
         values[col_mc - 1] = parse_italian_or_standard_number(values[col_mc - 1])
         values[col_kg - 1] = parse_italian_or_standard_number(values[col_kg - 1])
 
@@ -220,7 +247,7 @@ def clean_excel_file(input_path: str | Path, output_path: str | Path, sheet_name
         ws.cell(row_idx, col_mc).number_format = FORMAT_QTA
         ws.cell(row_idx, col_kg).number_format = FORMAT_QTA
 
-    # Formato anche sull'intestazione non necessario, ma imposto larghezze minime utili.
+    # Imposto larghezze minime utili.
     ws.column_dimensions[ws.cell(HEADER_ROW, col_doc).column_letter].width = 12
     ws.column_dimensions[ws.cell(HEADER_ROW, col_mc).column_letter].width = 12
     ws.column_dimensions[ws.cell(HEADER_ROW, col_kg).column_letter].width = 12
@@ -229,7 +256,7 @@ def clean_excel_file(input_path: str | Path, output_path: str | Path, sheet_name
 
     print(f"File pulito salvato in: {output_path}")
     print(f"Righe elaborate: {len(data_rows)}")
-    print(f"Valori Nr. Doc. corretti/normalizzati: {corrected_doc_count}")
+    print(f"Valori Nr. Doc. convertiti/normalizzati: {corrected_doc_count}")
 
 
 # =========================
