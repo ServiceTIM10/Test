@@ -16,7 +16,7 @@ st.set_page_config(
     layout="centered",
 )
 
-st.title("Pulizia file Excel - Rifiuti Nave")
+st.title("Pulizia file Excel - Rifiuti Nave 🚢")
 st.markdown(
     """
 Questa applicazione consente di caricare il file Excel relativo ai Rifiuti Nave, correggere automaticamente le colonne **Nr. Doc.**, **MC** e **Kg**, ordinare il database e scaricare il file pulito.
