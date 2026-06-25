@@ -104,18 +104,19 @@ def normalize_nr_doc(value: Any) -> int | None:
 
 def parse_italian_or_standard_number(value: Any) -> float | None:
     """
-    Converte MC e Kg in numero float gestendo sia formati standard sia italiani,
-    inclusi alcuni casi sporchi/malformati.
+    Converte MC e Kg in numero float gestendo formati standard, italiani
+    e casi sporchi/malformati.
 
     Esempi gestiti:
-    - 1234.56      -> 1234.56
-    - '1234.56'    -> 1234.56
-    - '1.234,56'   -> 1234.56
-    - '1234,56'    -> 1234.56
-    - '1,234.56'   -> 1234.56
-    - '1.125.00'   -> 1125.00
-    - '1.125.000'  -> 1125000.00
-    - '' / None    -> None
+    - 1234.56        -> 1234.56
+    - '1234.56'      -> 1234.56
+    - '1.234,56'     -> 1234.56
+    - '1234,56'      -> 1234.56
+    - '1,234.56'     -> 1234.56
+    - '1.125.00'     -> 1125.00
+    - '1.125.000'    -> 1125000.00
+    - '1.125.000.00' -> 1125000.00
+    - '' / None      -> None
     """
     if value is None or value == "":
         return None
@@ -126,15 +127,18 @@ def parse_italian_or_standard_number(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
 
-    s = unwrap_excel_text_formula(str(value)).strip()
+    s_originale = str(value)
+
+    s = unwrap_excel_text_formula(s_originale).strip()
     s = s.replace(" ", "").replace("\u00a0", "")
     s = s.strip("'")
+    s = s.replace("€", "")
 
     if not s:
         return None
 
-    # Rimuove eventuali simboli non numerici ricorrenti.
-    s = s.replace("€", "")
+    # Rimuove eventuali caratteri non visibili o separatori strani
+    s = s.replace("\t", "").replace("\n", "").replace("\r", "")
 
     if "," in s and "." in s:
         # Il separatore decimale è quello più a destra.
@@ -150,34 +154,43 @@ def parse_italian_or_standard_number(value: Any) -> float | None:
         s = s.replace(",", ".")
 
     elif "." in s:
-        # Caso con più punti.
-        # Esempi:
-        # - 1.125.00   -> 1125.00
-        # - 1.125.000  -> 1125000
-        # - 1.125.000.00 -> 1125000.00
         if s.count(".") > 1:
             parts = s.split(".")
 
-            # Se l'ultima parte ha 1 o 2 cifre, la interpreto come parte decimale.
-            # I punti precedenti vengono interpretati come separatori delle migliaia.
-            if len(parts[-1]) in (1, 2):
+            # Caso sporco tipo:
+            # 1.125.00 -> 1125.00
+            # 1.125.000.00 -> 1125000.00
+            if len(parts[-1]) in (1, 2) and all(part.isdigit() for part in parts):
                 integer_part = "".join(parts[:-1])
                 decimal_part = parts[-1]
                 s = integer_part + "." + decimal_part
 
-            # Se tutte le parti dopo la prima hanno 3 cifre,
-            # interpreto tutti i punti come separatori delle migliaia.
-            elif all(len(p) == 3 for p in parts[1:]):
+            # Caso con soli separatori migliaia:
+            # 1.125.000 -> 1125000
+            elif all(part.isdigit() for part in parts) and all(len(part) == 3 for part in parts[1:]):
                 s = "".join(parts)
 
             else:
-                raise ValueError(f"Formato numerico con punti non riconosciuto: {value!r}")
+                raise ValueError(
+                    f"Formato numerico con punti non riconosciuto: valore originale={value!r}, valore pulito={s!r}"
+                )
 
-        # Caso con un solo punto: lo lascio come decimale standard.
-        # Esempio: 1234.56 -> 1234.56
+    # Ultima protezione: se per qualsiasi motivo arriva ancora un valore tipo 1.125.00,
+    # lo correggiamo immediatamente prima della conversione finale.
+    if s.count(".") > 1 and "," not in s:
+        parts = s.split(".")
 
-    return float(s)
+        if len(parts[-1]) in (1, 2) and all(part.isdigit() for part in parts):
+            s = "".join(parts[:-1]) + "." + parts[-1]
+        elif all(part.isdigit() for part in parts) and all(len(part) == 3 for part in parts[1:]):
+            s = "".join(parts)
 
+    try:
+        return float(s)
+    except ValueError as e:
+        raise ValueError(
+            f"Impossibile convertire il valore numerico: valore originale={value!r}, valore dopo pulizia={s!r}"
+        ) from e
 
 def get_header_map(ws) -> dict[str, int]:
     """Restituisce {nome_colonna: indice_colonna_excel_1_based}."""
