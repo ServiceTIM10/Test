@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -53,6 +54,10 @@ class CleaningReport:
     kg_corrections: list[ValueCorrection]
 
 
+def is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and value.strip() == "")
+
+
 def normalize_header(value: Any) -> str:
     if value is None:
         return ""
@@ -60,20 +65,124 @@ def normalize_header(value: Any) -> str:
     return str(value).strip()
 
 
+def simplify_header(value: Any) -> tuple[str, list[str]]:
+    """
+    Normalizza un'intestazione per riconoscere varianti come:
+    - Nr. Doc., nr. doc., n. doc., Nr doc
+    - MC, mc, metri cubi
+    - Kg, kg, KG
+    """
+    text = normalize_header(value)
+    text = text.replace("³", "3").replace("²", "2")
+
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower()
+
+    token_text = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    tokens = token_text.split() if token_text else []
+    compact = "".join(tokens)
+
+    return compact, tokens
+
+
+def identify_required_column(header_value: Any) -> str | None:
+    compact, tokens = simplify_header(header_value)
+
+    if not compact:
+        return None
+
+    doc_exact = {
+        "nrdoc",
+        "ndoc",
+        "nodoc",
+        "nrodoc",
+        "numdoc",
+        "numerodoc",
+        "docnr",
+        "docn",
+        "docno",
+        "docnum",
+        "docnumero",
+        "nrdocumento",
+        "ndocumento",
+        "nodocumento",
+        "nrodocumento",
+        "numdocumento",
+        "numerodocumento",
+        "documentonr",
+        "documenton",
+        "documentono",
+        "documentonum",
+        "documentonumero",
+    }
+
+    doc_tokens = {"doc", "documento", "document", "documenti"}
+    number_tokens = {"n", "nr", "no", "nro", "num", "numero", "number"}
+
+    if compact in doc_exact:
+        return "Nr. Doc."
+
+    if any(token in doc_tokens for token in tokens) and any(
+        token in number_tokens for token in tokens
+    ):
+        return "Nr. Doc."
+
+    mc_exact = {
+        "mc",
+        "m3",
+        "metricubi",
+        "metrocubo",
+        "metrocubi",
+        "metri3",
+        "metro3",
+    }
+
+    if compact in mc_exact:
+        return "MC"
+
+    if tokens in (["m", "c"], ["m", "3"]):
+        return "MC"
+
+    if "metri" in tokens and "cubi" in tokens:
+        return "MC"
+
+    if "metro" in tokens and "cubo" in tokens:
+        return "MC"
+
+    kg_terms = {"kg", "kgs", "kilogrammi", "kilogrammo", "chilogrammi", "chilogrammo"}
+
+    if compact in kg_terms:
+        return "Kg"
+
+    if any(token in kg_terms for token in tokens):
+        return "Kg"
+
+    return None
+
+
 def scan_header_row(ws: Worksheet, header_row: int) -> dict[str, int]:
     found: dict[str, int] = {}
+    found_original_headers: dict[str, str] = {}
 
     for cell in ws[header_row]:
-        header = normalize_header(cell.value)
+        canonical_header = identify_required_column(cell.value)
 
-        if header in REQUIRED_COLUMNS:
-            if header in found:
-                raise ValueError(
-                    f"Colonna duplicata trovata nella riga {header_row}: '{header}'. "
-                    "Il file deve contenerla una sola volta."
-                )
+        if canonical_header is None:
+            continue
 
-            found[header] = cell.column
+        original_header = normalize_header(cell.value)
+
+        if canonical_header in found:
+            previous_header = found_original_headers[canonical_header]
+            raise ValueError(
+                f"Colonna duplicata o ambigua trovata nella riga {header_row}: "
+                f"'{previous_header}' e '{original_header}' sono entrambe riconosciute come "
+                f"'{canonical_header}'. Il file deve contenerla una sola volta."
+            )
+
+        found[canonical_header] = cell.column
+        found_original_headers[canonical_header] = original_header
 
     return found
 
@@ -97,6 +206,8 @@ def find_required_columns(ws: Worksheet) -> HeaderDetectionResult:
     raise ValueError(
         "Colonne obbligatorie mancanti. "
         "Il codice cerca le intestazioni solo nella riga 1 o nella riga 2. "
+        "Sono accettate anche varianti come 'nr. doc.', 'n. doc.', 'mc', "
+        "'metri cubi', 'kg' e 'KG'. "
         + "; ".join(details)
         + "."
     )
@@ -122,7 +233,7 @@ def parse_doc_number_value(
     row: int,
     column_name: str = "Nr. Doc.",
 ) -> int:
-    if value is None or (isinstance(value, str) and value.strip() == ""):
+    if is_blank(value):
         raise ValueError(f"Valore vuoto in riga {row}, colonna '{column_name}'.")
 
     if isinstance(value, bool):
@@ -181,7 +292,7 @@ def parse_doc_number_value(
 
 
 def parse_decimal_value(value: Any, *, row: int, column_name: str) -> Decimal:
-    if value is None or (isinstance(value, str) and value.strip() == ""):
+    if is_blank(value):
         raise ValueError(f"Valore vuoto in riga {row}, colonna '{column_name}'.")
 
     if isinstance(value, bool):
@@ -311,8 +422,8 @@ def normalize_original_text(value: Any) -> str:
     return str(value).strip()
 
 
-def build_runs(values: list[int]) -> list[tuple[int, int, int]]:
-    runs: list[tuple[int, int, int]] = []
+def build_runs(values: list[int | None]) -> list[tuple[int, int, int | None]]:
+    runs: list[tuple[int, int, int | None]] = []
     start = 0
 
     while start < len(values):
@@ -327,6 +438,30 @@ def build_runs(values: list[int]) -> list[tuple[int, int, int]]:
     return runs
 
 
+def nearest_previous_non_blank_run_value(
+    runs: list[tuple[int, int, int | None]],
+    idx: int,
+) -> int | None:
+    for previous_idx in range(idx - 1, -1, -1):
+        value = runs[previous_idx][2]
+        if value is not None:
+            return value
+
+    return None
+
+
+def nearest_next_non_blank_run_value(
+    runs: list[tuple[int, int, int | None]],
+    idx: int,
+) -> int | None:
+    for next_idx in range(idx + 1, len(runs)):
+        value = runs[next_idx][2]
+        if value is not None:
+            return value
+
+    return None
+
+
 def trailing_zero_candidates(value: int, max_zeroes: int = 6) -> list[int]:
     if value < 0:
         return []
@@ -336,18 +471,21 @@ def trailing_zero_candidates(value: int, max_zeroes: int = 6) -> list[int]:
 
 
 def correct_truncated_doc_numbers(
-    doc_numbers: list[int],
+    doc_numbers: list[int | None],
     *,
     first_data_row: int,
     max_neighbor_gap: int = 200,
-) -> tuple[list[int], list[DocCorrection]]:
+) -> tuple[list[int | None], list[DocCorrection]]:
     corrected = doc_numbers[:]
     corrections: list[DocCorrection] = []
     runs = build_runs(doc_numbers)
 
     for idx, (start, end, raw_value) in enumerate(runs):
-        previous_value = runs[idx - 1][2] if idx > 0 else None
-        next_value = runs[idx + 1][2] if idx + 1 < len(runs) else None
+        if raw_value is None:
+            continue
+
+        previous_value = nearest_previous_non_blank_run_value(runs, idx)
+        next_value = nearest_next_non_blank_run_value(runs, idx)
 
         candidates: list[tuple[int, Decimal, int, str]] = []
 
@@ -433,24 +571,28 @@ def sort_data_rows_by_doc(
     max_row = ws.max_row
     max_col = ws.max_column
 
-    rows: list[tuple[int, int, list[Any]]] = []
+    rows: list[tuple[int, int, int, list[Any]]] = []
 
     for row in range(first_data_row, max_row + 1):
         doc_value = ws.cell(row=row, column=nr_doc_col).value
 
-        if not isinstance(doc_value, int):
-            doc_value = int(doc_value)
+        if is_blank(doc_value):
+            sort_group = 1
+            numeric_doc_value = 0
+        else:
+            sort_group = 0
+            numeric_doc_value = int(doc_value)
 
         row_values = [
             ws.cell(row=row, column=col).value
             for col in range(1, max_col + 1)
         ]
 
-        rows.append((doc_value, row, row_values))
+        rows.append((sort_group, numeric_doc_value, row, row_values))
 
-    rows.sort(key=lambda item: (item[0], item[1]))
+    rows.sort(key=lambda item: (item[0], item[1], item[2]))
 
-    for output_row, (_doc_value, _original_row, row_values) in enumerate(
+    for output_row, (_sort_group, _doc_value, _original_row, row_values) in enumerate(
         rows,
         start=first_data_row,
     ):
@@ -492,67 +634,76 @@ def clean_excel_file(
     if ws.max_row < first_data_row:
         raise ValueError("Il file non contiene righe dati sotto l'intestazione.")
 
-    doc_numbers: list[int] = []
+    doc_numbers: list[int | None] = []
 
     mc_corrections: list[ValueCorrection] = []
     kg_corrections: list[ValueCorrection] = []
 
     for row in range(first_data_row, ws.max_row + 1):
-        original_doc_value = ws.cell(row=row, column=nr_doc_col).value
-        original_mc_value = ws.cell(row=row, column=mc_col).value
-        original_kg_value = ws.cell(row=row, column=kg_col).value
+        doc_cell = ws.cell(row=row, column=nr_doc_col)
+        mc_cell = ws.cell(row=row, column=mc_col)
+        kg_cell = ws.cell(row=row, column=kg_col)
 
-        doc_number = parse_doc_number_value(
-            original_doc_value,
-            row=row,
-            column_name="Nr. Doc.",
-        )
+        original_doc_value = doc_cell.value
+        original_mc_value = mc_cell.value
+        original_kg_value = kg_cell.value
 
-        mc_value = parse_decimal_value(
-            original_mc_value,
-            row=row,
-            column_name="MC",
-        )
-
-        kg_value = parse_decimal_value(
-            original_kg_value,
-            row=row,
-            column_name="Kg",
-        )
-
-        mc_value_rounded = round_to_2_decimals(mc_value)
-        kg_value_rounded = round_to_2_decimals(kg_value)
-
-        mc_clean_text = format_decimal_it(mc_value_rounded)
-        kg_clean_text = format_decimal_it(kg_value_rounded)
-
-        original_mc_text = normalize_original_text(original_mc_value)
-        original_kg_text = normalize_original_text(original_kg_value)
-
-        if original_mc_text != mc_clean_text:
-            mc_corrections.append(
-                ValueCorrection(
-                    excel_row=row,
-                    column_name="MC",
-                    original_value=original_mc_value,
-                    corrected_value=mc_clean_text,
-                )
+        if is_blank(original_doc_value):
+            doc_number = None
+        else:
+            doc_number = parse_doc_number_value(
+                original_doc_value,
+                row=row,
+                column_name="Nr. Doc.",
             )
 
-        if original_kg_text != kg_clean_text:
-            kg_corrections.append(
-                ValueCorrection(
-                    excel_row=row,
-                    column_name="Kg",
-                    original_value=original_kg_value,
-                    corrected_value=kg_clean_text,
-                )
+        if not is_blank(original_mc_value):
+            mc_value = parse_decimal_value(
+                original_mc_value,
+                row=row,
+                column_name="MC",
             )
+
+            mc_value_rounded = round_to_2_decimals(mc_value)
+            mc_clean_text = format_decimal_it(mc_value_rounded)
+            original_mc_text = normalize_original_text(original_mc_value)
+
+            if original_mc_text != mc_clean_text:
+                mc_corrections.append(
+                    ValueCorrection(
+                        excel_row=row,
+                        column_name="MC",
+                        original_value=original_mc_value,
+                        corrected_value=mc_clean_text,
+                    )
+                )
+
+            mc_cell.value = float(mc_value_rounded)
+
+        if not is_blank(original_kg_value):
+            kg_value = parse_decimal_value(
+                original_kg_value,
+                row=row,
+                column_name="Kg",
+            )
+
+            kg_value_rounded = round_to_2_decimals(kg_value)
+            kg_clean_text = format_decimal_it(kg_value_rounded)
+            original_kg_text = normalize_original_text(original_kg_value)
+
+            if original_kg_text != kg_clean_text:
+                kg_corrections.append(
+                    ValueCorrection(
+                        excel_row=row,
+                        column_name="Kg",
+                        original_value=original_kg_value,
+                        corrected_value=kg_clean_text,
+                    )
+                )
+
+            kg_cell.value = float(kg_value_rounded)
 
         doc_numbers.append(doc_number)
-
-        ws.cell(row=row, column=mc_col).value = float(mc_value_rounded)
-        ws.cell(row=row, column=kg_col).value = float(kg_value_rounded)
 
     corrected_doc_numbers, nr_doc_corrections = correct_truncated_doc_numbers(
         doc_numbers,
