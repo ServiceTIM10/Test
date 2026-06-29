@@ -97,7 +97,7 @@ st.title("Pulizia file Excel - Rifiuti Nave 🚢")
 
 st.markdown(
     """
-Questa applicazione consente di caricare un file Excel relativo ai **Rifiuti Nave**, correggere automaticamente le colonne **Nr. Doc.**, **MC** e **Kg**, ordinare il database e scaricare il file pulito.
+Questa applicazione consente di caricare il file Excel "grezzo" relativo ai **Rifiuti Nave**, correggere automaticamente le colonne **Nr. Doc.**, **MC** e **Kg**, ordinare il database e scaricare il file pulito.
 
 Il file viene elaborato temporaneamente durante la sessione e non viene salvato in modo permanente dall'applicazione.
 """
