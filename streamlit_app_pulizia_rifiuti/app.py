@@ -17,9 +17,6 @@ st.set_page_config(
 
 
 def get_sheet_names(uploaded_file) -> list[str]:
-    """
-    Legge i nomi dei fogli presenti nel file Excel caricato.
-    """
     uploaded_file.seek(0)
     workbook = load_workbook(uploaded_file, read_only=True, data_only=False)
     sheet_names = workbook.sheetnames
@@ -28,25 +25,21 @@ def get_sheet_names(uploaded_file) -> list[str]:
 
 
 def format_excel_rows(first_row: int, last_row: int) -> str:
-    """
-    Restituisce una rappresentazione leggibile delle righe Excel corrette.
-    """
     if first_row == last_row:
         return str(first_row)
 
     return f"{first_row}-{last_row}"
 
 
-def render_corrections_report(corrections) -> None:
-    """
-    Mostra il report delle correzioni effettuate sulla colonna Nr. Doc.
-    """
+def render_nr_doc_report(corrections, max_rows: int = 10) -> None:
+    st.subheader("Correzioni Nr. Doc.")
+
     total_groups = len(corrections)
     total_rows = sum(item.affected_rows for item in corrections)
 
     col1, col2 = st.columns(2)
-    col1.metric("Gruppi Nr. Doc. corretti", total_groups)
-    col2.metric("Righe Nr. Doc. corrette", total_rows)
+    col1.metric("Gruppi corretti", total_groups)
+    col2.metric("Righe corrette", total_rows)
 
     if not corrections:
         st.info("Non sono stati rilevati valori troncati nella colonna Nr. Doc.")
@@ -54,21 +47,50 @@ def render_corrections_report(corrections) -> None:
 
     preview_rows = []
 
-    for item in corrections[:30]:
+    for item in corrections[:max_rows]:
         preview_rows.append(
             {
                 "Righe Excel": format_excel_rows(item.first_excel_row, item.last_excel_row),
                 "Valore originale": item.original_value,
                 "Valore corretto": item.corrected_value,
                 "Righe impattate": item.affected_rows,
-                "Regola applicata": item.rule,
             }
         )
 
     st.dataframe(preview_rows, use_container_width=True, hide_index=True)
 
-    if len(corrections) > 30:
-        st.caption(f"Mostrate le prime 30 correzioni su {len(corrections)} gruppi corretti.")
+    if len(corrections) > max_rows:
+        st.caption(
+            f"Mostrate le prime {max_rows} correzioni su {len(corrections)} gruppi corretti."
+        )
+
+
+def render_value_report(column_name: str, corrections, max_rows: int = 10) -> None:
+    st.subheader(f"Correzioni {column_name}")
+
+    st.metric("Celle corrette / normalizzate", len(corrections))
+
+    if not corrections:
+        st.info(f"Non sono state rilevate correzioni nella colonna {column_name}.")
+        return
+
+    preview_rows = []
+
+    for item in corrections[:max_rows]:
+        preview_rows.append(
+            {
+                "Riga Excel": item.excel_row,
+                "Valore originale": item.original_value,
+                "Valore corretto": item.corrected_value,
+            }
+        )
+
+    st.dataframe(preview_rows, use_container_width=True, hide_index=True)
+
+    if len(corrections) > max_rows:
+        st.caption(
+            f"Mostrate le prime {max_rows} correzioni su {len(corrections)} celle corrette."
+        )
 
 
 st.title("Pulizia file Excel - Rifiuti Nave 🚢")
@@ -81,7 +103,7 @@ Il file viene elaborato temporaneamente durante la sessione e non viene salvato 
 """
 )
 
-with st.expander("Cosa fa l'app", expanded=True):
+with st.expander("Cosa fa l'app", expanded=False):
     st.markdown(
         """
 L'app esegue queste operazioni:
@@ -180,7 +202,7 @@ if st.button("Pulisci file", type="primary"):
                 uploaded_file.seek(0)
                 input_path.write_bytes(uploaded_file.getbuffer())
 
-                corrections = clean_excel_file(
+                report = clean_excel_file(
                     input_path=input_path,
                     output_path=output_path,
                     sheet_name=sheet_name.strip() or None,
@@ -190,8 +212,17 @@ if st.button("Pulisci file", type="primary"):
 
             st.success("File pulito correttamente.")
 
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Foglio pulito", report.sheet_name)
+            col2.metric("Riga intestazioni", report.header_row)
+            col3.metric("Righe dati", report.data_rows)
+
             with st.expander("Report elaborazione", expanded=True):
-                render_corrections_report(corrections)
+                render_nr_doc_report(report.nr_doc_corrections, max_rows=10)
+                st.divider()
+                render_value_report("MC", report.mc_corrections, max_rows=10)
+                st.divider()
+                render_value_report("Kg", report.kg_corrections, max_rows=10)
 
             st.download_button(
                 label="Scarica file pulito",
