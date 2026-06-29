@@ -97,7 +97,7 @@ st.title("Pulizia file Excel - Rifiuti Nave 🚢")
 
 st.markdown(
     """
-Questa applicazione consente di caricare il file Excel originale relativo ai **Rifiuti Nave**, correggere automaticamente le colonne **Nr. Doc.**, **MC** e **Kg**, ordinare il database e scaricare il file pulito.
+Questa applicazione consente di caricare il file Excel originale relativo ai Rifiuti Nave, pulire automaticamente le colonne Nr. Doc., MC e Kg, ordinare il database e scaricare il file pulito.
 
 Il file viene elaborato temporaneamente durante la sessione e non viene salvato in modo permanente dall'applicazione.
 """
@@ -108,7 +108,7 @@ with st.expander("Cosa fa l'app", expanded=False):
         """
 L'app esegue queste operazioni:
 
-1. cerca le intestazioni **Nr. Doc.**, **MC** e **Kg** nella **riga 1**;
+1. cerca le intestazioni **Nr. Doc.**, **MC** e **Kg** nella **riga 1** (l’app riconosce anche intestazioni leggermente diverse nell'uso di maiuscole e minuscole);
 2. se non le trova tutte nella riga 1, le cerca nella **riga 2**;
 3. pulisce solo le colonne **Nr. Doc.**, **MC** e **Kg**;
 4. converte **Nr. Doc.** in numero intero;
@@ -143,7 +143,6 @@ L'app restituisce errore se:
 - il nome del foglio indicato non esiste;
 - una o più colonne obbligatorie non sono presenti né in riga 1 né in riga 2;
 - una delle colonne obbligatorie è duplicata;
-- una cella di **Nr. Doc.**, **MC** o **Kg** è vuota;
 - una cella contiene una formula invece di un valore numerico;
 - una cella contiene un valore non convertibile in numero.
 
